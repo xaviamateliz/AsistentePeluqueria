@@ -1,0 +1,17 @@
+Bienvenido a Peluquería Brillo Estelar
+
+Servicios disponibles:
+- Corte de cabello: 15 €
+- Tinte básico: 25 €
+- Tinte premium: 40 €
+- Peinado: 20 €
+- Lavado y secado: 10 €
+- Tratamiento capilar: 30 €
+- Barbería (afeitado y recorte): 18 €
+
+Horario de atención:
+- Lunes a Viernes: 9:00 - 19:00
+- Sábado: 9:00 - 15:00
+- Domingo: cerrado
+
+No se necesita cita previa.
