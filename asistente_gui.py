@@ -17,7 +17,11 @@ load_dotenv()
 API_KEY = os.getenv("API_KEY")
 
 MODELO = "gemini-3-flash-preview"
-ARCHIVO_SERVICIOS = "servicios.txt"
+
+# La ruta de servicios.txt se construye a partir de la carpeta de ESTE
+# archivo .py. Así funciona aunque ejecutemos el programa desde otra carpeta.
+CARPETA = os.path.dirname(os.path.abspath(__file__))
+ARCHIVO_SERVICIOS = os.path.join(CARPETA, "servicios.txt")
 
 # Variables de la animación "Respondiendo..."
 pensando = False       # interruptor: True mientras esperamos a Gemini
@@ -28,6 +32,7 @@ id_animacion = None    # identificador de la próxima animación programada
 # LÓGICA DE LA IA
 # ------------------------------------------------------------
 def cargar_servicios():
+    """Lee el archivo de servicios de la peluquería."""
     with open(ARCHIVO_SERVICIOS, "r", encoding="utf-8") as archivo:
         return archivo.read()
 
@@ -49,14 +54,12 @@ def crear_instrucciones():
 
 
 def limpiar_texto(texto):
-    """Por si el modelo devuelve Markdown, quitamos los asteriscos."""
     texto = texto.replace("**", "")
     texto = texto.replace("* ", "- ")
     return texto.strip()
 
 
 def preguntar_a_gemini(pregunta):
-    """Envía la pregunta a Gemini y devuelve solo el texto de la respuesta."""
     interaccion = cliente.interactions.create(
         model=MODELO,
         system_instruction=INSTRUCCIONES,
@@ -71,6 +74,11 @@ def preguntar_a_gemini(pregunta):
 # FUNCIONES DE LA INTERFAZ
 # ------------------------------------------------------------
 def animar_pensando(paso):
+    """Muestra en el chat 'Respondiendo.' / '..' / '...' mientras
+    esperamos a Gemini.
+    Entrada: paso (int), número de la animación; decide cuántos puntos
+    se ven (1, 2 o 3).
+    Salida: ninguna. Modifica el chat y se vuelve a programar con after()."""
     global id_animacion
 
     if not pensando:
@@ -90,12 +98,14 @@ def animar_pensando(paso):
 
 
 def quitar_pensando():
-    """Detiene la animación y borra la línea 'Respondiendo...' del chat."""
+    """Detiene la animación y borra la línea 'Respondiendo...' del chat.
+    Entrada: ninguna.
+    Salida: ninguna. Pone pensando=False y cancela el after pendiente."""
     global pensando, id_animacion
 
     pensando = False
     if id_animacion is not None:
-        ventana.after_cancel(id_animacion) 
+        ventana.after_cancel(id_animacion)
         id_animacion = None
 
     chat.config(state="normal")
@@ -106,7 +116,10 @@ def quitar_pensando():
 
 
 def mostrar_mensaje(texto, etiqueta):
-    """Añade un mensaje al chat."""
+    """Añade un mensaje al chat.
+    Entrada: texto (str) a mostrar; etiqueta (str o None) con el nombre
+    del estilo/color: 'usuario', 'asistente', 'error'...
+    Salida: ninguna. Escribe en el chat y baja el scroll."""
     quitar_pensando()  # si había un 'Respondiendo...', lo quitamos
     chat.config(state="normal")
     chat.insert(tk.END, texto + "\n\n", etiqueta)
@@ -115,10 +128,16 @@ def mostrar_mensaje(texto, etiqueta):
 
 
 def activar_boton():
+    """Vuelve a habilitar el botón Enviar cuando llega la respuesta.
+    Entrada: ninguna. Salida: ninguna."""
     boton.config(state="normal")
 
 
 def obtener_respuesta(pregunta):
+    """Se ejecuta en un hilo aparte para que la ventana no se congele
+    mientras Gemini responde.
+    Entrada: pregunta (str) del usuario.
+    Salida: ninguna. Muestra la respuesta (o el error) en el chat."""
     try:
         texto = preguntar_a_gemini(pregunta)
         ventana.after(0, mostrar_mensaje, "Asistente: " + texto, "asistente")
@@ -131,8 +150,16 @@ def obtener_respuesta(pregunta):
 
 
 def enviar(evento=None):
-    """Se llama al pulsar el botón o la tecla Enter."""
+    """Se llama al pulsar el botón o la tecla Enter.
+    Entrada: evento, lo manda Tkinter al pulsar Enter (con el botón
+    no llega nada, por eso vale None por defecto).
+    Salida: ninguna. Lanza la consulta en un hilo."""
     global pensando
+
+    # Si hay errores de arranque o ya estamos esperando respuesta,
+    # no enviamos nada (Enter se puede pulsar aunque el botón esté bloqueado).
+    if errores or pensando:
+        return
 
     pregunta = entrada.get().strip()
     if pregunta == "":
@@ -153,11 +180,26 @@ def enviar(evento=None):
 # ------------------------------------------------------------
 # PROGRAMA PRINCIPAL
 # ------------------------------------------------------------
-INSTRUCCIONES = crear_instrucciones()
-cliente = genai.Client(
-    api_key=API_KEY,
-    http_options=types.HttpOptions(timeout=30000),  # 30 sec si pasa, salta el except
-)
+errores = []        # mensajes de problemas al arrancar (se muestran en el chat)
+INSTRUCCIONES = None
+cliente = None
+
+# Si falta servicios.txt, la ventana se abre igualmente y avisa del problema.
+try:
+    INSTRUCCIONES = crear_instrucciones()
+except FileNotFoundError:
+    errores.append("No se encontró servicios.txt. "
+                   "Debe estar en la misma carpeta que asistente_gui.py.")
+
+# El cliente solo se crea si hay clave; así, sin .env, la ventana
+# se abre y muestra el aviso en vez de cerrarse con un error.
+if API_KEY:
+    cliente = genai.Client(
+        api_key=API_KEY,
+        http_options=types.HttpOptions(timeout=30000),  # 30 sec si pasa, salta el except
+    )
+else:
+    errores.append("No se encontró API_KEY. Revisa tu archivo .env.")
 
 ventana = tk.Tk()
 ventana.title("Asistente de Peluquería Xavi")
@@ -185,8 +227,10 @@ boton.pack(side=tk.RIGHT)
 mostrar_mensaje("Bienvenido al Asistente de Peluquería.\n"
                 "Escribe tu pregunta abajo y presiona 'Enviar'.", None)
 
-if not API_KEY:
-    mostrar_mensaje("No se encontró API_KEY. Revisa tu archivo .env.", "error")
+# Mostramos los errores de arranque (si los hay) y bloqueamos el botón
+for mensaje_error in errores:
+    mostrar_mensaje(mensaje_error, "error")
+if errores:
     boton.config(state="disabled")
 
 ventana.mainloop()
